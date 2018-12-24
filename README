@@ -1,0 +1,279 @@
+Secure-Boot-Sign-Modules
+
+User's guide
+============
+
+Needed files and directories
+----------------------------
+
+- sbsm_sign_modules file
+- sbsm_remove_signed_modules file
+- sbsm_sign_modules.service file
+- sbsm_modules_list_to_sign.txt file
+- sbsm_config file
+- /etc/sbsm directory
+
+Note:
+  Every # prompt show commands that need to run as root, and every
+  $ prompt show commands that that can be run as unprivileged user.
+
+
+Scripted installation
+---------------------
+
+In a "root" terminal:
+
+$ sudo -i
+
+Download sbsm_install.sh script file from the git repository:
+
+# wget https://github.com/NVieville/secure-boot-sign-modules/raw/master/sbsm_install.sh
+
+Make it executable:
+
+# chmod +x sbsm_install.sh
+
+Launch it:
+
+# ./sbsm_install.sh
+
+Proceed to configuration if needed (see below).
+
+
+Manual installation
+-------------------
+
+Grab all the needed files from the git repository, then in a "root"
+terminal:
+
+$ sudo -i
+
+Copy sbsm_sign_modules, sbsm_remove_signed_modules and
+sbsm_build_modules_list files to /usr/bin/ directory:
+
+# cp -f sbsm_sign_modules sbsm_remove_signed_modules sbsm_build_modules_list /usb/bin/
+
+If needed, add complete path or relative path before the file name (for
+example ~/Dowmloads/sbsm_sign_modules)
+
+Make the /usr/bin/sbsm_sign_modules, /usr/bin/sbsm_remove_signed_modules
+and /usr/bin/sbsm_build_modules_list files executables:
+
+# chmod +x /usr/bin/sbsm_sign_modules
+# chmod +x /usr/bin/sbsm_remove_signed_modules
+# chmod +x /usr/bin/sbsm_build_modules_list
+
+Copy sbsm_sign_modules.service file to /usr/lib/systemd/system/
+directory:
+
+# cp -f sbsm_sign_modules.service /usr/lib/systemd/system/
+
+Same comment as above about the path to the directory containing the
+file.
+
+Enable the new systemd service:
+
+# systemctl enable sbsm_sign_modules.service
+
+Copy sbsm_modules_list_to_sign.txt and sbsm_config files to /etc/sbsm/
+directory:
+
+# cp -f sbsm_modules_list_to_sign.txt /etc/sbsm/
+# cp -f sbsm_config /etc/sbsm/
+
+Same comment as above about the path to the directory containing the
+file.
+If the /etc/sbsm directory doesn't exist, create it:
+
+# mkdir /etc/sbsm
+
+In order to sign needed modules each time a new kernel is installed,
+create a symbolic link to /usr/bin/sbsm_sign_modules in
+/etc/kernel/postinst.d/ directory:
+
+# ln -nsf /usr/bin/sbsm_sign_modules /etc/kernel/postinst.d/
+
+In order to restore unsigned modules before uninstalling a kernel,
+create a symbolic link to /usr/bin/sbsm_remove_signed_modules in
+/etc/kernel/prerm.d/ directory:
+
+# ln -nsf /usr/bin/sbsm_remove_signed_modules /etc/kernel/prerm.d/
+
+If needed quit the "root" terminal:
+
+# exit
+
+
+Configuration
+-------------
+
+If needed, edit the /etc/sbsm/sbsm_config file with a text editor as
+root:
+
+$ sudo -b gedit /etc/sbsm/sbsm_config
+
+or
+
+$ sudo -b geany /etc/sbsm/sbsm_config
+
+This file is auto-documented and provides an easy way to modify default
+settings regarding the signing tool, the name and the location of the
+private key and the certificate.
+
+If a scripted installation was made, the
+/etc/sbsm/sbsm_modules_list_to_sign.txt file has already been created
+and probably doesn't need any modifications. Maybe it needs some tweak.
+So, if needed, edit the /etc/sbsm/sbsm_modules_list_to_sign.txt file
+with a text editor as root:
+
+$ sudo -b gedit /etc/sbsm/sbsm_modules_list_to_sign.txt
+
+or
+
+$ sudo -b geany /etc/sbsm/sbsm_modules_list_to_sign.txt
+
+Add to this file, the desired modules names one per line without their
+extension and their path. Each empty line or beginning with a sharp will
+be ignored.
+
+For example, if the desired modules are the next files:
+- /lib/modules/4.15.0-42-generic/kernel/drivers/staging/rtlwifi/r8822be.ko
+- /lib/modules/4.15.0-42-generic/kernel/drivers/net/wireless/realtek/rtlwifi/rtl8188ee/rtl8188ee.ko
+
+Add to the /etc/sbsm/sbsm_modules_list_to_sign.txt file the next
+lines:
+
+r8822be
+rtl8188ee
+
+Save the file and quit the editor.
+
+It is also possible to auto-generate this file with the
+/usb/bin/sbsm_build_modules_list script. Take care to save the existing
+file before proceeding. Launch it with "-h" parameter to get its usage
+information.
+
+
+Usage
+-----
+
+For the first time use, before any kernel update occurs, one needs to
+reboot the computer.
+
+Next signing file modules operation will be automatically run on each
+new kernel installation (while updating your system).
+
+It's also possible to launch the script manually.
+In a "root" terminal, type the next command:
+
+# /usr/bin/sbsm_sign_modules $(uname -r)
+
+If the script runs without issue, in the desired modules directory,
+there should be two files by module: the original one and the signed
+one.
+
+With the same example as above, the next command:
+
+# ls -l /lib/modules/4.15.0-42-generic/kernel/drivers/staging/rtlwifi/
+
+must show two lines containing:
+
+/lib/modules/4.15.0-42-generic/kernel/drivers/staging/rtlwifi/r8822be.ko
+/lib/modules/4.15.0-42-generic/kernel/drivers/staging/rtlwifi/r8822be.ko.sbsm_unsigned
+
+The r8822be.ko is the signed module. The r8822be.ko.sbsm_unsigned file is the
+saved and unsigned original file.
+
+In case of trouble, it's possible to revert back to the original state
+by replacing the signed module files with the original unsigned ones (in
+a "root" terminal as usual):
+
+# cp -f /lib/modules/4.15.0-42-generic/kernel/drivers/staging/rtlwifi/r8822be.ko.sbsm_unsigned /lib/modules/4.15.0-42-generic/kernel/drivers/staging/rtlwifi/r8822be.ko
+
+Repeat this command with each modified module.
+
+
+Scripted uninstall
+------------------
+
+In a "root" terminal:
+
+$ sudo -i
+
+Download sbsm_uninstall.sh script file from the git repository:
+
+# wget https://github.com/NVieville/secure-boot-sign-modules/raw/master/sbsm_uninstall.sh
+
+Make it executable:
+
+# chmod +x sbsm_uninstall.sh
+
+Launch it:
+
+# ./sbsm_uninstall.sh
+
+Delete if necessary the not deleted files indicated at the end of the
+execution of the uninstall script.
+
+
+Manual uninstall
+----------------
+
+In a "root" terminal:
+
+$ sudo -i
+
+Delete sbsm_sign_modules, sbsm_remove_signed_modules and
+sbsm_build_modules_list files from /usr/bin/ directory:
+
+# rm -f /usb/bin/sbsm_sign_modules /usb/bin/sbsm_remove_signed_modules /usb/bin/sbsm_build_modules_list
+
+Stop and deactivate sbsm_sign_modules.service service:
+
+# systemctl stop sbsm_sign_modules.service
+# systemctl disable sbsm_sign_modules.service
+
+Delete sbsm_sign_modules.service file from /usr/lib/systemd/system/
+directory:
+
+# rm -f /usr/lib/systemd/system/sbsm_sign_modules.service
+
+Delete sbsm_modules_list_to_sign.txt file and sbsm_config file from
+/etc/sbsm/ directory:
+
+# rm -f /etc/sbsm/sbsm_modules_list_to_sign.txt /etc/sbsm/sbsm_config
+
+If /etc/sbsm directory is empty, delete it:
+
+# rm -rf /etc/sbsm
+
+Remove the symbolic link to /usr/bin/sbsm_sign_modules from
+/etc/kernel/postinst.d/ driectory:
+
+# rm -f /etc/kernel/postinst.d/sbsm_sign_modules
+
+Remove the symbolic link to /usr/bin/sbsm_remove_signed_modules from
+/etc/kernel/prerm.d/ directory:
+
+# rm -f /etc/kernel/prerm.d/sbsm_remove_signed_modules
+
+Delete README file and README_fr file from /usr/share/doc/sbsm/
+directory:
+
+# rm -f /usr/share/doc/sbsm/README /usr/share/doc/sbsm/README_fr
+
+If /usr/share/doc/sbsm directory is empty, delete it:
+
+# rm -rf /usr/share/doc/sbsm
+
+Search for and possibly delete unsigned module files saved. The list is
+obtained with the following command:
+
+# find /lib/modules/ -name "*.sbsm_unsigned" -print
+
+Each line resulting from the previous command represents probably a
+module to be deleted.
+
+If needed quit the "root" terminal:
+
+# exit

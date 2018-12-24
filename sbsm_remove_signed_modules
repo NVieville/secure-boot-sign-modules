@@ -1,0 +1,97 @@
+#!/bin/sh
+#
+
+# sbsm_remove_signed_modules - Helper script to remove signed kernel
+# modules by the sbsm_sign_modules script for secure-boot-sign-modules.
+#
+# Copyright (c) 2018-2019 Nicolas Viéville <nicolas.vieville@uphf.fr>
+#
+# Permission is hereby granted, free of charge, to any person obtaining
+# a copy of this software and associated documentation files (the
+# "Software"), to deal in the Software without restriction, including
+# without limitation the rights to use, copy, modify, merge, publish,
+# distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so, subject to
+# the following conditions:
+#
+# The above copyright notice and this permission notice shall be
+# included in all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+# NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+# LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+# WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+set -e
+
+KERNEL_VERSION="${1}"
+RETURN_CODE=0
+
+SBSM_DIR_CONFIG="/etc/sbsm"
+SBSM_MODULES_LIST_TO_SIGN_FILE="${SBSM_DIR_CONFIG}/sbsm_modules_list_to_sign.txt"
+
+PREFIX=/usr
+
+FIND=/usr/bin/find
+ECHO=/bin/echo
+MV=/bin/mv
+GREP=/bin/grep
+UNAME=/bin/uname
+
+# Maybe useless but...
+if [ ! -x "${ECHO}" ] ; then
+    /bin/echo "${ECHO} not found - aborting" >&2
+    exit 1
+fi
+
+# Check if root launch this script.
+if [ "$(id -u)" -ne 0 ] ; then
+    ${ECHO} "$0 must be run as root - aborting" >&2
+    exit 1
+fi
+
+for ONE_BIN in FIND MV GREP UNAME
+do {
+    if [ ! -x $(eval "${ECHO} \${${ONE_BIN}}") ] ; then
+        if [ "$(eval "${ECHO} \${${ONE_BIN}}")" = "$(eval "${ECHO} \${${ONE_BIN#\${PREFIX}}")" ] ; then
+            ${ECHO} "$(eval "${ECHO} \${${ONE_BIN}}") not found - trying in ${PREFIX}" >&2
+            if [ -x ${PREFIX}$(eval "${ECHO} \${${ONE_BIN}}") ] ; then
+                eval "$ONE_BIN=${PREFIX}$(eval "${ECHO} \${${ONE_BIN}}")"
+            else
+                ${ECHO} "${PREFIX}$(eval "${ECHO} \${${ONE_BIN}}") not found - aborting" >&2
+                RETURN_CODE=1
+            fi
+        fi
+    fi
+} ; done
+
+if [ ${RETURN_CODE} -eq 0 ] ; then
+    if [ ! -d "${SBSM_DIR_CONFIG}" ] ; then
+        ${ECHO} "Config directory ${SBSM_DIR_CONFIG} not found - aborting" >&2
+        RETURN_CODE=1
+    fi
+fi
+if [ ${RETURN_CODE} -eq 0 ] ; then
+    if [ ! -r "${SBSM_MODULES_LIST_TO_SIGN_FILE}" ] ; then
+        ${ECHO} "Config file ${SBSM_MODULES_LIST_TO_SIGN_FILE} not found - aborting" >&2
+        RETURN_CODE=1
+    fi
+fi
+
+if [ ${RETURN_CODE} -eq 0 ] ; then
+    if [ "x${KERNEL_VERSION}" = "x" ] ; then
+        KERNEL_VERSION=$(${UNAME} -r)
+    fi
+    ${GREP} -ve "^#" -ve "^$" "${SBSM_MODULES_LIST_TO_SIGN_FILE}" | while read MODULE_TO_RESTORE
+    do {
+        for MODULE_FOUND in $(${FIND} /lib/modules/"${KERNEL_VERSION}" -type f -name "${MODULE_TO_RESTORE}.ko*.sbsm_unsigned" -print)
+        do {
+            ${MV} -f "${MODULE_FOUND}" "${MODULE_FOUND%.sbsm_unsigned}" >&2
+        } ; done
+    } ; done
+fi
+
+exit ${RETURN_CODE}

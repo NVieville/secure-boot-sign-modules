@@ -1,0 +1,66 @@
+# sbsm_config - Shell script variables override for 
+# secure-boot-sign-modules.
+#
+# Copyright (c) 2018-2019 Nicolas Viéville <nicolas.vieville@uphf.fr>
+#
+# Permission is hereby granted, free of charge, to any person obtaining
+# a copy of this software and associated documentation files (the
+# "Software"), to deal in the Software without restriction, including
+# without limitation the rights to use, copy, modify, merge, publish,
+# distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so, subject to
+# the following conditions:
+#
+# The above copyright notice and this permission notice shall be
+# included in all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+# NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+# LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+# WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+# Usage:
+#
+# Uncomment and modify variables definitions below to override default
+# values set for Ubuntu. Unsure that paths and names define existing
+# directories and files, and that hash value is correct.
+# As this file is sourced in the sbsm_sign_modules shell script, it is
+# possible to use variables defined prior its inclusion (for example the
+# ones defining the kernel version. See example about signing tool
+# below.
+#
+# Actual default values are:
+#   SBSM_PRIVKEY=/var/lib/shim-signed/mok/MOK.priv
+#   SBSM_CERTIFICATE=/var/lib/shim-signed/mok/MOK.der
+#   SBSM_SIGN_BIN=/usr/bin/kmodsign
+#   SBSM_SIGN_HASH=sha512
+#
+# It is not necessary to redefine them, unless they have been modified,
+# or the distribution in use is not Ubuntu.
+#
+
+# Path and file name to the private key.
+#
+#SBSM_PRIVKEY=/path_to/key.priv
+
+# Path and file name to the certificate.
+#
+#SBSM_CERTIFICATE=/path_to/certificate.der
+
+# Path and file name to the signing tool. Some distributions provide one
+# signing tool per kernel located in kernels directories. It is possible
+# to use defined variables from the sbsm_sign_modules shell script to
+# locate the signing tool. For example, in case of Fedora, one can use
+# this definition:
+# SBSM_SIGN_BIN=/usr/src/kernels/${KERNEL_VERSION}/scripts/sign-file
+#
+#SBSM_SIGN_BIN=/path_to/signing_tool
+
+# Value of the chosen hash algorithm.
+# Possible values are: sha1 sha224 sha256 sha384 sha512
+#
+#SBSM_SIGN_HASH=sha512
+

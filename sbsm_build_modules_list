@@ -1,0 +1,279 @@
+#!/bin/sh
+#
+
+# sbsm_build_modules_list - Helper script to build the list of needed
+# unsigned modules for secure-boot-sign-modules.
+#
+# Copyright (c) 2018-2019 Nicolas Viéville <nicolas.vieville@uphf.fr>
+#
+# Permission is hereby granted, free of charge, to any person obtaining
+# a copy of this software and associated documentation files (the
+# "Software"), to deal in the Software without restriction, including
+# without limitation the rights to use, copy, modify, merge, publish,
+# distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so, subject to
+# the following conditions:
+#
+# The above copyright notice and this permission notice shall be
+# included in all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+# NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+# LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+# WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+RETURN_CODE=0
+FORCE_OVERWRITE_CONFIG_FILE=0
+FORCE_USER_RESPONSE=0
+VERB=0
+
+SBSM_DIR_CONFIG="/etc/sbsm"
+SBSM_MODULES_LIST_TO_SIGN_FILE="${SBSM_DIR_CONFIG}/sbsm_modules_list_to_sign.txt"
+
+PREFIX=/usr
+
+ECHO=/bin/echo
+STTY=/bin/stty
+DD=/bin/dd
+PRINTF=/usr/bin/printf
+WC=/usr/bin/wc
+LSPCI=/usr/bin/lspci
+GREP=/bin/grep
+AWK=/usr/bin/awk
+SED=/bin/sed
+CAT=/bin/cat
+
+# Print usage
+#
+print_usage(){
+    ${ECHO} -e >&2 "Usage: sbsm_build_modules_list [-f] [-y] [-v]\n"
+    ${ECHO} -e >&2 "   Build /etc/sbsm_build_modules_list_to_sign.txt file."
+    ${ECHO} -e >&2 "   -f\tForce rewrite /etc/sbsm_build_modules_list_to_sign.txt file if it exists"
+    ${ECHO} -e >&2 "   -y\tAnswer yes to all questions"
+    ${ECHO} -e >&2 "   -v\tVerbose mode"
+    ${ECHO} -e >&2 ""
+    exit 1
+}
+
+# Read only one character from stdin and if return key is pressed set
+# variable content to DEFAULT_INPUT (e.g. "y" here). Freely inspired
+# from https://unix.stackexchange.com/questions/464930/can-i-read-a-single-character-from-stdin-in-posix-shell/464963#464963
+#
+# Take one argument: the variable name used to store the result.
+#
+# Function needed because "read -n 1 USER_RESPONSE" is only available
+# in bash and is not compliant with other POSIX shells (sh, dash, etc.).
+#
+read_one_char_y(){
+    local DEFAULT_INPUT="y"
+    # If stdin is a tty device, save actual settings, and set it to raw.
+    if [ -t 0 ]; then
+        SAVED_TTY_SETTINGS=$(${STTY} -g)
+        ${STTY} raw -echo
+    fi
+
+    eval "$1="
+    while
+    # Read one byte, using a work around for the fact that command
+    # substitution strips the last character.
+    C=$(${DD} bs=1 count=1 2> /dev/null; ${ECHO} .)
+    C=${C%.}
+
+    # Break out of the loop on empty input (eof) or if a full character
+    # has been accumulated in the output variable (using "wc -m" to
+    # count the number of characters).
+    [ -n "${C}" ] &&
+    eval "$1=\${$1}"'${C}
+        [ "$(($(${PRINTF} %s "${'"$1"'}" | ${WC} -m)))" -eq 0 ]'; do
+        continue
+    done
+    # If enter key was pressed, set variable to default.
+    if [ $(${PRINTF} "%02x" \'${C}) == "0d" ] ; then
+        eval "$1=\${DEFAULT_INPUT}"
+    fi
+
+    # Restore previous tty device settings
+    if [ -t 0 ]; then
+        ${STTY} "${SAVED_TTY_SETTINGS}"
+    fi
+}
+
+# Maybe useless but...
+if [ ! -x "${ECHO}" ] ; then
+    /bin/echo "${ECHO} not found - aborting" >&2
+    exit 1
+fi
+
+# Check if root launch this script.
+if [ "$(id -u)" -ne 0 ] ; then
+    ${ECHO} "$0 must be run as root - aborting" >&2
+    exit 1
+fi
+
+for ONE_BIN in STTY DD PRINTF WC GREP AWK SED CAT
+do {
+    if [ ! -x $(eval "${ECHO} \${${ONE_BIN}}") ] ; then
+        if [ "$(eval "${ECHO} \${${ONE_BIN}}")" = "$(eval "${ECHO} \${${ONE_BIN#\${PREFIX}}")" ] ; then
+            ${ECHO} "$(eval "${ECHO} \${${ONE_BIN}}") not found - trying in ${PREFIX}" >&2
+            if [ -x ${PREFIX}$(eval "${ECHO} \${${ONE_BIN}}") ] ; then
+                eval "$ONE_BIN=${PREFIX}$(eval "${ECHO} \${${ONE_BIN}}")"
+            else
+                ${ECHO} "${PREFIX}$(eval "${ECHO} \${${ONE_BIN}}") not found - aborting" >&2
+                RETURN_CODE=1
+            fi
+        fi
+    fi
+} ; done
+
+if [ ${RETURN_CODE} -eq 0 ] ; then
+    while [ $# -gt 0 ]
+    do
+        case "$1" in
+            -f)
+                FORCE_OVERWRITE_CONFIG_FILE=1
+                ;;
+            -y)
+                FORCE_USER_RESPONSE=1
+                ;;
+            -v)
+                VERB=1
+                ;;
+            --)
+                shift
+                break
+                ;;
+            -*)
+                print_usage
+                exit 1
+                ;;
+            *)
+                ;;
+        esac
+        shift
+    done
+fi
+
+if [ ! -x "${LSPCI}" ] ; then
+    if [ -x /usr/sbin/lspci ] ; then
+        LSPCI=/usr/sbin/lspci
+    else
+        ${ECHO} "lspci not found - aborting" >&2
+        if [ ${VERB} -eq 1 ] ; then
+            ${ECHO} "Maybe package \"pciutils\" is missing?" >&2
+        fi
+        RETURN_CODE=1
+    fi
+fi
+
+if [ ${RETURN_CODE} -eq 0 ] ; then
+    if [ ! -d "${SBSM_DIR_CONFIG}" ] ; then
+        ${ECHO} "Config directory ${SBSM_DIR_CONFIG} not found - aborting" >&2
+        if [ ${VERB} -eq 1 ] ; then
+            ${ECHO} "It should be useful to create this directory: sudo mkdir ${SBSM_DIR_CONFIG}" >&2
+        fi
+        RETURN_CODE=1
+    fi
+fi
+if [ ${RETURN_CODE} -eq 0 ] ; then
+    if [ -e "${SBSM_MODULES_LIST_TO_SIGN_FILE}" ] && [ ${FORCE_OVERWRITE_CONFIG_FILE} -eq 0 ] ; then
+        USER_RESPONSE=""
+        if [ ${VERB} -eq 0 ] ; then
+            ${ECHO} -ne "Config file ${SBSM_MODULES_LIST_TO_SIGN_FILE} exists, overwrite it [Y/n]: "
+        else
+            ${ECHO} -ne "Config file ${SBSM_MODULES_LIST_TO_SIGN_FILE} exists, overwrite it\n(maybe it should be saved before continue - unless all previous values will be lost) [Y/n]: "
+        fi
+        read_one_char_y USER_RESPONSE
+        if [ "${USER_RESPONSE}" != "${USER_RESPONSE#[Yy]}" ] ;then
+            FORCE_OVERWRITE_CONFIG_FILE=1
+        else
+            ${ECHO} "Please rename config file ${SBSM_MODULES_LIST_TO_SIGN_FILE} before launching again this script or use -f parameter."
+            if [ ${VERB} -eq 1 ] ; then
+                ${ECHO} "For example type: sudo mv ${SBSM_MODULES_LIST_TO_SIGN_FILE} ${SBSM_MODULES_LIST_TO_SIGN_FILE}.old"
+            fi
+            exit 0
+        fi
+    fi
+    if [ ! -e "${SBSM_MODULES_LIST_TO_SIGN_FILE}" ] || [ ${FORCE_OVERWRITE_CONFIG_FILE} -eq 1 ] ; then
+        ${ECHO} "Creating config file ${SBSM_MODULES_LIST_TO_SIGN_FILE}"
+        ${CAT} > "${SBSM_MODULES_LIST_TO_SIGN_FILE}" <<EOF
+# sbsm_modules_list_to_sign.txt - List of modules name to sign  for
+# secure-boot-sign-modules - one per line. Commented or empty lines are
+# ignored.
+#
+# Copyright (c) 2018-2019 Nicolas Viéville <nicolas.vieville@uphf.fr>
+#
+# Permission is hereby granted, free of charge, to any person obtaining
+# a copy of this software and associated documentation files (the
+# "Software"), to deal in the Software without restriction, including
+# without limitation the rights to use, copy, modify, merge, publish,
+# distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so, subject to
+# the following conditions:
+#
+# The above copyright notice and this permission notice shall be
+# included in all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+# NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+# LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+# WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+EOF
+    else
+        exit 0
+    fi
+fi
+
+if [ ${RETURN_CODE} -eq 0 ] ; then
+    for DEVICE_ID in $(${LSPCI} | ${AWK} '{print $1}')
+    do {
+        if [ "x${DEVICE_ID}" != "x" ] ; then
+            ONE_DEVICE=$(${LSPCI} -ks "${DEVICE_ID}")
+            ONE_MODULE_DESCRIPTION=$(${ECHO} "${ONE_DEVICE}" | ${GREP} "${DEVICE_ID}" | ${SED} -e "s%^${DEVICE_ID} *%%g")
+            if [ $? -ne 0 ] || [ "x${ONE_DEVICE}" = "x" ] ; then
+                ${ECHO} "Error while getting device drivers information for device ${DEVICE_ID}."
+                if [ ${VERB} -eq 1 ] ; then
+                    ${ECHO} "${ONE_MODULE_DESCRIPTION}"
+                fi
+            else
+                if $(${ECHO} ${ONE_DEVICE} | ${GREP} -qi "Kernel driver in use:") ; then
+                    if [ ${VERB} -eq 1 ] ; then
+                        ${ECHO} "Device ${DEVICE_ID} ${ONE_MODULE_DESCRIPTION} is already in use (skipping)."
+                    fi
+                    continue
+                fi
+                for ONE_MODULE in $(${ECHO} ${ONE_DEVICE} | ${GREP} -i "Kernel modules:" | ${SED} -e 's%^.*: %%g' -e 's%,%%g')
+                do {
+                    if ! $(${GREP} -qe "^${ONE_MODULE}" "${SBSM_MODULES_LIST_TO_SIGN_FILE}") ; then
+                        if [ ${FORCE_USER_RESPONSE} -eq 0 ] ; then
+                            USER_RESPONSE=""
+                            ${ECHO} "For ${ONE_MODULE_DESCRIPTION},"
+                            ${ECHO} -ne "do you want to add ${ONE_MODULE} module to ${SBSM_MODULES_LIST_TO_SIGN_FILE} file [Y/n]: "
+                            read_one_char_y USER_RESPONSE
+                        else
+                            USER_RESPONSE="y"
+                        fi
+                        if [ "${USER_RESPONSE}" != "${USER_RESPONSE#[Yy]}" ] ;then
+                            if [ ${VERB} -eq 0 ] ; then
+                                ${ECHO} "Adding ${ONE_MODULE} module for ${ONE_MODULE_DESCRIPTION}."
+                            else
+                                ${ECHO} "Adding ${ONE_MODULE} for device ${DEVICE_ID} ${ONE_MODULE_DESCRIPTION} in ${SBSM_MODULES_LIST_TO_SIGN_FILE} file."
+                            fi
+                            ${ECHO} ${ONE_MODULE} >> "${SBSM_MODULES_LIST_TO_SIGN_FILE}"
+                        fi
+                    fi
+                } ; done
+            fi
+        else
+            ${ECHO} "no PCI devices detected! Does lspci encountered some problems?"
+        fi
+    } ; done
+fi
+
+exit ${RETURN_CODE}

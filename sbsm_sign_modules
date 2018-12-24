@@ -1,0 +1,176 @@
+#!/bin/sh
+#
+
+# sbsm_sign_modules - Helper script to sign kernel modules for
+# secure-boot-sign-modules.
+#
+# Copyright (c) 2018-2019 Nicolas Viéville <nicolas.vieville@uphf.fr>
+#
+# Permission is hereby granted, free of charge, to any person obtaining
+# a copy of this software and associated documentation files (the
+# "Software"), to deal in the Software without restriction, including
+# without limitation the rights to use, copy, modify, merge, publish,
+# distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so, subject to
+# the following conditions:
+#
+# The above copyright notice and this permission notice shall be
+# included in all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+# NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+# LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+# WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+set -e
+
+KERNEL_VERSION="${1}"
+RETURN_CODE=0
+
+SBSM_DIR_CONFIG="/etc/sbsm"
+SBSM_MODULES_LIST_TO_SIGN_FILE="${SBSM_DIR_CONFIG}/sbsm_modules_list_to_sign.txt"
+SBSM_CONFIG_FILE="${SBSM_DIR_CONFIG}/sbsm_config"
+MODULE_COMPACTED_EXTENSION=".xz"
+
+# Default values for Ubuntu
+SBSM_PRIVKEY=/var/lib/shim-signed/mok/MOK.priv
+SBSM_CERTIFICATE=/var/lib/shim-signed/mok/MOK.der
+SBSM_SIGN_BIN=/usr/bin/kmodsign
+SBSM_SIGN_HASH=sha512
+
+PREFIX=/usr
+
+FIND=/usr/bin/find
+ECHO=/bin/echo
+XZ=/usr/bin/xz
+MV=/bin/mv
+RM=/bin/rm
+CP=/bin/cp
+GREP=/bin/grep
+MODINFO=/sbin/modinfo
+UNAME=/bin/uname
+
+# Maybe useless but...
+if [ ! -x "${ECHO}" ] ; then
+    /bin/echo "${ECHO} not found - aborting" >&2
+    exit 1
+fi
+
+# Check if root launch this script.
+if [ "$(id -u)" -ne 0 ] ; then
+    ${ECHO} "$0 must be run as root - aborting" >&2
+    exit 1
+fi
+
+for ONE_BIN in FIND XZ MV RM CP GREP MODINFO UNAME
+do {
+    if [ ! -x $(eval "${ECHO} \${${ONE_BIN}}") ] ; then
+        if [ "$(eval "${ECHO} \${${ONE_BIN}}")" = "$(eval "${ECHO} \${${ONE_BIN#\${PREFIX}}")" ] ; then
+            ${ECHO} "$(eval "${ECHO} \${${ONE_BIN}}") not found - trying in ${PREFIX}" >&2
+            if [ -x ${PREFIX}$(eval "${ECHO} \${${ONE_BIN}}") ] ; then
+                eval "$ONE_BIN=${PREFIX}$(eval "${ECHO} \${${ONE_BIN}}")"
+            else
+                ${ECHO} "${PREFIX}$(eval "${ECHO} \${${ONE_BIN}}") not found - aborting" >&2
+                RETURN_CODE=1
+            fi
+        fi
+    fi
+} ; done
+
+if [ ${RETURN_CODE} -eq 0 ] ; then
+    if [ "x${KERNEL_VERSION}" = "x" ] ; then
+        KERNEL_VERSION=$(${UNAME} -r)
+    fi
+fi
+if [ ${RETURN_CODE} -eq 0 ] ; then
+    if [ ! -d "${SBSM_DIR_CONFIG}" ] ; then
+        ${ECHO} "Config directory ${SBSM_DIR_CONFIG} not found - aborting" >&2
+        RETURN_CODE=1
+    fi
+fi
+if [ ${RETURN_CODE} -eq 0 ] ; then
+    if [ ! -r "${SBSM_MODULES_LIST_TO_SIGN_FILE}" ] ; then
+        ${ECHO} "Config file ${SBSM_MODULES_LIST_TO_SIGN_FILE} not found - aborting" >&2
+        RETURN_CODE=1
+    fi
+fi
+if [ ${RETURN_CODE} -eq 0 ] ; then
+    if [ -e "${SBSM_CONFIG_FILE}" ] ; then
+        . "${SBSM_CONFIG_FILE}"
+    fi
+fi
+
+if [ ${RETURN_CODE} -eq 0 ] ; then
+    if [ ! -x "${SBSM_SIGN_BIN}" ] ; then
+        ${ECHO} "${SBSM_SIGN_BIN} not found. Unsure that a signing tool is installed (for example sbsigntool for Ubuntu)." >&2
+        RETURN_CODE=1
+    fi
+fi
+
+if [ ${RETURN_CODE} -eq 0 ] ; then
+    if [ -r "${SBSM_PRIVKEY}" ] && [ -r "${SBSM_CERTIFICATE}" ] && [ -r "${SBSM_MODULES_LIST_TO_SIGN_FILE}" ] ; then
+        ${GREP} -ve "^#" -ve "^$" "${SBSM_MODULES_LIST_TO_SIGN_FILE}" | while read MODULE_TO_SIGN
+        do {
+            for MODULE_FOUND in $(${FIND} /lib/modules/"${KERNEL_VERSION}" -type f -name "${MODULE_TO_SIGN}.ko*" -print)
+            do {
+                # Module is an unsigned backup.
+                if [ "${MODULE_FOUND#*.sbsm_unsigned}" != "${MODULE_FOUND}" ] ; then
+                    continue
+                fi
+                # Module is already signed.
+                if $(${MODINFO} "${MODULE_FOUND}" | ${GREP} -q "PKCS#7") ; then
+                    continue
+                fi
+                ERROR_IN_LOOP=0
+                MODULE_COMPACTED=0
+                MODULE_FOUND_BACKUP="${MODULE_FOUND}.sbsm_unsigned"
+                ${CP} -af "${MODULE_FOUND}" "${MODULE_FOUND_BACKUP}" >&2
+                if [ $? -ne 0 ] ; then
+                    ${ECHO} "Error while copying ${MODULE_FOUND} to ${MODULE_FOUND_BACKUP}" >&2
+                    RETURN_CODE=1
+                else
+                    if [ "${MODULE_FOUND#*$MODULE_COMPACTED_EXTENSION}" != "${MODULE_FOUND}" ] ; then
+                        MODULE_COMPACTED=1
+                        ${XZ} -df "${MODULE_FOUND}" >&2
+                        if [ $? -ne 0 ] ; then
+                            ${ECHO} "Error while decompacting ${MODULE_FOUND}" >&2
+                            ERROR_IN_LOOP=1
+                        else
+                            MODULE_FOUND="${MODULE_FOUND%$MODULE_COMPACTED_EXTENSION}"
+                        fi
+                    fi
+                    if [ -f "${MODULE_FOUND}" ] && [ ${ERROR_IN_LOOP} -eq 0 ] ; then
+                        ${SBSM_SIGN_BIN} "${SBSM_SIGN_HASH}" "${SBSM_PRIVKEY}" "${SBSM_CERTIFICATE}" "${MODULE_FOUND}" >&2
+                        if [ $? -ne 0 ] ; then
+                            ${ECHO} "Error while signing ${MODULE_FOUND}" >&2
+                            ERROR_IN_LOOP=1
+                        fi
+                        if [ ${MODULE_COMPACTED} -eq 1 ] && [ ${ERROR_IN_LOOP} -eq 0 ] ; then
+                            ${XZ} -f "${MODULE_FOUND}" >&2
+                            if [ $? -ne 0 ] ; then
+                                ${ECHO} "Error while compacting ${MODULE_FOUND}" >&2
+                                ERROR_IN_LOOP=1
+                            fi
+                        fi
+                    else
+                        ERROR_IN_LOOP=1
+                    fi
+                    if [ ${ERROR_IN_LOOP} -ne 0 ] ; then
+                        ${ECHO} "Something went wrong, restoring ${MODULE_FOUND_BACKUP%.sbsm_unsigned}" >&2
+                        ${RM} -f "${MODULE_FOUND}" >&2
+                        ${MV} -f "${MODULE_FOUND_BACKUP}" "${MODULE_FOUND_BACKUP%.sbsm_unsigned}" >&2
+                        RETURN_CODE=1
+                    fi
+                fi
+            } ; done
+        } ; done
+    else
+        ${ECHO} -e "Either no signing private key or certificate or modules list file were found:\n- ${SBSM_PRIVKEY}\n- ${SBSM_CERTIFICATE}\n- ${SBSM_MODULES_LIST_TO_SIGN_FILE}" >&2
+        RETURN_CODE=1
+    fi
+fi
+
+exit ${RETURN_CODE}

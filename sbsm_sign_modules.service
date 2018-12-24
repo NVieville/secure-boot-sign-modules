@@ -1,0 +1,14 @@
+[Unit]
+Description=Secure Boot sign unsigned kernel modules on startup
+ConditionFileNotEmpty=/etc/sbsm/sbsm_modules_list_to_sign.txt
+ConditionFileNotEmpty=/etc/sbsm/sbsm_config
+After=akmods.service dkms.service vboxdrv.service
+Before=systemd-modules-load.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/sbsm_sign_modules $(/bin/uname -r)
+
+[Install]
+WantedBy=multi-user.target
